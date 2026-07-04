@@ -7,7 +7,7 @@ import time
 from typing import Any
 
 from ..config import Settings
-from .base import VpnError, refresh_region_plan
+from .base import VpnError, refresh_region_plan, refresh_region_requires_regions, validate_refresh_region
 
 HMA_CONNECTED = "connected"
 HMA_DISCONNECTED = "disconnected"
@@ -141,7 +141,7 @@ class HmaClient:
         )
 
     def refresh_ip(self, region: str | None = None) -> tuple[dict[str, Any], list[str], bool]:
-        requested_region = self._validate_region(region) if region else None
+        requested_region = validate_refresh_region(region) if region else None
         initial_state = self.get_connection_state()
         if initial_state != HMA_CONNECTED:
             raise VpnError(
@@ -156,7 +156,7 @@ class HmaClient:
             raise VpnError("Could not read a valid HMA VPN IP before refresh", status_code=409, stderr=str(before))
 
         current_region = self.get_region()
-        regions = [] if requested_region else self.get_regions()
+        regions = self.get_regions() if refresh_region_requires_regions(requested_region) else []
         region_plan = refresh_region_plan(requested_region, current_region, regions)
         candidates = region_plan.candidates
 
@@ -198,6 +198,7 @@ class HmaClient:
             "requested_region": requested_region,
             "initial_region": current_region,
             "selected_region": self._selected_region,
+            "missing_regions": region_plan.missing_regions,
             "tried_regions": tried_regions,
             "before": before,
             "after": after,

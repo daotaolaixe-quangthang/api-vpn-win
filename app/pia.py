@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .config import Settings
-from .providers.base import VpnError, refresh_region_plan
+from .providers.base import VpnError, refresh_region_plan, refresh_region_requires_regions, validate_refresh_region
 
 REGION_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 CONNECTED = "Connected"
@@ -121,7 +121,7 @@ class PiaClient:
         )
 
     def refresh_ip(self, region: str | None = None) -> tuple[dict[str, Any], list[str], bool]:
-        requested_region = self._validate_region(region) if region else None
+        requested_region = validate_refresh_region(region) if region else None
         current_region = self.get_region()
         before, ip_warnings = self.ip_info()
         before_vpnip = before.get("vpnip")
@@ -133,7 +133,7 @@ class PiaClient:
             )
 
         warnings = [*ip_warnings, "PIA reconnect does not guarantee a different IP."]
-        regions = [] if requested_region else self.get_regions()
+        regions = self.get_regions() if refresh_region_requires_regions(requested_region) else []
         region_plan = refresh_region_plan(requested_region, current_region, regions)
         candidates = region_plan.candidates
 
@@ -168,6 +168,7 @@ class PiaClient:
             "requested_region": requested_region,
             "initial_region": current_region,
             "selected_region": selected_region,
+            "missing_regions": region_plan.missing_regions,
             "tried_regions": tried_regions,
             "before": before,
             "after": after,

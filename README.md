@@ -613,8 +613,11 @@ POST /vpn/{provider}/refresh-ip?region=<region>
 Mục tiêu:
 
 - Giữ provider đang dùng.
-- Nếu không truyền `region`, dùng `auto-country`: lấy region hiện tại, suy ra country key, random trong các region cùng country, và ưu tiên region khác region hiện tại nếu có.
-- Nếu truyền `region`, dùng `strict-region`: luôn chỉ set và reconnect đúng region đó.
+- Không truyền `region`: dùng `auto-country`, lấy region hiện tại, suy ra country key, random trong các region cùng country, và ưu tiên region khác region hiện tại nếu có.
+- `region=<region>`: dùng `strict-region`, luôn chỉ set và reconnect đúng region đó.
+- `region=all`: dùng `all-regions`, random trong toàn bộ region có sẵn của provider.
+- `region=<prefix>-`: dùng `prefix-regions`, random trong mọi region bắt đầu bằng prefix đó, ví dụ `usa-` sẽ chọn trong nhóm `usa-*`.
+- `region=a|b|c`: dùng `region-list`, random trong các region được liệt kê, ví dụ `usa-chicago|vietnam|singapore-cbd`.
 - Nếu country chỉ có 1 region, ví dụ `vietnam`, API vẫn chọn region đó rồi disconnect/connect lại.
 - Reconnect VPN.
 - Chờ tới khi `after.vpnip` tồn tại và là IP hợp lệ.
@@ -626,6 +629,8 @@ Ví dụ:
 
 Provider mới sau này nên dùng helper `refresh_region_plan` trong `app.providers.base` để giữ logic này thống nhất.
 
+Nếu dùng danh sách region, nên encode dấu `|` thành `%7C` trong URL.
+
 ```bash
 curl -X POST http://127.0.0.1:8000/vpn/pia/refresh-ip
 curl -X POST "http://127.0.0.1:8000/vpn/pia/refresh-ip?region=us-seattle"
@@ -635,6 +640,9 @@ curl -X POST "http://127.0.0.1:8000/vpn/hma/refresh-ip?region=<hma-region-id>"
 
 curl -X POST http://127.0.0.1:8000/vpn/expressvpn/refresh-ip
 curl -X POST "http://127.0.0.1:8000/vpn/expressvpn/refresh-ip?region=germany-frankfurt-1"
+curl -X POST "http://127.0.0.1:8000/vpn/expressvpn/refresh-ip?region=all"
+curl -X POST "http://127.0.0.1:8000/vpn/expressvpn/refresh-ip?region=usa-"
+curl -X POST "http://127.0.0.1:8000/vpn/expressvpn/refresh-ip?region=usa-chicago%7Cvietnam%7Csingapore-cbd"
 ```
 
 Response PIA thành công mẫu:
@@ -782,7 +790,7 @@ us-chicago
 
 ### 9.2 PIA refresh-ip logic
 
-PIA có 2 mode refresh:
+PIA dùng logic refresh chung như các provider khác:
 
 1. Không truyền `region`:
    - API lấy region hiện tại.
@@ -791,9 +799,10 @@ PIA có 2 mode refresh:
    - Nếu region hiện tại là `us-new-york`, country key là `us`, API random trong các region `us-*` như `us-seattle`, `us-california`, `us-chicago` và ưu tiên region khác region hiện tại nếu có.
 
 2. Có truyền `region`:
-   - API dùng strict region mode.
-   - Ví dụ `?region=us-seattle` thì chỉ reconnect trong `us-seattle`.
-   - Không nhảy sang state khác.
+   - `?region=us-seattle` chỉ reconnect trong `us-seattle`.
+   - `?region=all` random toàn bộ region của provider.
+   - `?region=us-` random mọi region có prefix `us-`.
+   - `?region=us-seattle%7Cvietnam%7Csingapore` random một trong các region được liệt kê.
 
 PIA refresh chỉ thành công khi `after.vpnip` hợp lệ và khác `before.vpnip`.
 
@@ -916,7 +925,10 @@ Nếu chưa connected, API trả 409:
 HMA cũng dùng logic refresh chung:
 
 - Không truyền `region`: dùng `auto-country`, random trong các gateway cùng country với region hiện tại.
-- Có truyền `region`: dùng `strict-region`, chỉ reconnect đúng gateway đó.
+- `region=<gateway-id>`: dùng `strict-region`, chỉ reconnect đúng gateway đó.
+- `region=all`: random toàn bộ gateway.
+- `region=<prefix>-`: random mọi gateway có prefix đó.
+- `region=a|b|c`: random một gateway trong danh sách được truyền.
 - Nếu country chỉ có 1 gateway, API vẫn chọn gateway đó rồi disconnect/connect lại.
 
 Mặc định:
@@ -1017,7 +1029,10 @@ curl -X POST "http://127.0.0.1:8000/vpn/expressvpn/connect?wait=true&region=germ
 ExpressVPN cũng dùng logic refresh chung:
 
 - Không truyền `region`: dùng `auto-country`, random trong các region cùng country với region hiện tại.
-- Có truyền `region`: dùng `strict-region`, chỉ set và reconnect đúng region đó.
+- `region=<region>`: dùng `strict-region`, chỉ set và reconnect đúng region đó.
+- `region=all`: random toàn bộ region.
+- `region=<prefix>-`: random mọi region có prefix đó, ví dụ `usa-`.
+- `region=a|b|c`: random một region trong danh sách được truyền.
 - Nếu country chỉ có 1 region, API vẫn chọn region đó rồi disconnect/connect lại.
 - `before.vpnip` phải tồn tại và hợp lệ.
 - `after.vpnip` phải tồn tại, hợp lệ, và khác IP cũ.
