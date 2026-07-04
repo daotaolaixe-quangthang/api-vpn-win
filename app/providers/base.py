@@ -1,5 +1,13 @@
+import random
 from dataclasses import dataclass
 from typing import Any, Protocol
+
+
+@dataclass
+class RefreshRegionPlan:
+    mode: str
+    country_key: str | None
+    candidates: list[str]
 
 
 @dataclass
@@ -19,6 +27,40 @@ class VpnError(Exception):
         if self.returncode is not None:
             detail["returncode"] = self.returncode
         return detail
+
+
+def refresh_region_plan(
+    requested_region: str | None,
+    current_region: str | None,
+    regions: list[str],
+) -> RefreshRegionPlan:
+    if requested_region:
+        return RefreshRegionPlan("strict-region", country_key(requested_region), [requested_region])
+    if not current_region:
+        return RefreshRegionPlan("auto-country", None, [])
+    current_country_key = country_key(current_region)
+    candidates = country_candidates(current_country_key, current_region, regions)
+    return RefreshRegionPlan("auto-country", current_country_key, candidates)
+
+
+def country_candidates(country_key_value: str, current_region: str, regions: list[str]) -> list[str]:
+    if "-" in current_region:
+        candidates = [region for region in regions if region == country_key_value or region.startswith(f"{country_key_value}-")]
+    else:
+        candidates = [region for region in regions if region == country_key_value]
+    random.shuffle(candidates)
+    if current_region in candidates and len(candidates) > 1:
+        candidates.remove(current_region)
+        candidates.append(current_region)
+    elif current_region not in candidates:
+        candidates.append(current_region)
+    return candidates or [current_region]
+
+
+def country_key(region: str) -> str:
+    if "-" not in region:
+        return region
+    return region.split("-", 1)[0]
 
 
 class VpnProvider(Protocol):

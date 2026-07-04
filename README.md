@@ -613,13 +613,18 @@ POST /vpn/{provider}/refresh-ip?region=<region>
 Mục tiêu:
 
 - Giữ provider đang dùng.
+- Nếu không truyền `region`, dùng `auto-country`: lấy region hiện tại, suy ra country key, random trong các region cùng country, và ưu tiên region khác region hiện tại nếu có.
+- Nếu truyền `region`, dùng `strict-region`: luôn chỉ set và reconnect đúng region đó.
+- Nếu country chỉ có 1 region, ví dụ `vietnam`, API vẫn chọn region đó rồi disconnect/connect lại.
 - Reconnect VPN.
 - Chờ tới khi `after.vpnip` tồn tại và là IP hợp lệ.
 - Chỉ thành công nếu `after.vpnip` khác `before.vpnip`.
-- Nếu IP sau là `Unknown`, rỗng, invalid, hoặc trùng IP cũ thì tiếp tục retry.
-- Nếu hết timeout hoặc hết số lần thử thì trả lỗi HTTP, không trả `ok:true`.
+- Nếu IP sau là `Unknown`, rỗng, invalid, hoặc trùng IP cũ thì tiếp tục retry nếu provider còn attempt.
+- Nếu hết timeout hoặc hết số lần thử thì provider có thể trả lỗi HTTP hoặc trả `ok:false` theo chính sách provider.
 
 Ví dụ:
+
+Provider mới sau này nên dùng helper `refresh_region_plan` trong `app.providers.base` để giữ logic này thống nhất.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/vpn/pia/refresh-ip
@@ -673,6 +678,8 @@ Response ExpressVPN thành công mẫu:
   "ok": true,
   "data": {
     "provider": "expressvpn",
+    "mode": "strict-region",
+    "country_key": "germany",
     "requested_region": "germany-frankfurt-1",
     "initial_region": "smart",
     "selected_region": "germany-frankfurt-1",
@@ -781,7 +788,7 @@ PIA có 2 mode refresh:
    - API lấy region hiện tại.
    - Suy ra country key.
    - Nếu region hiện tại là `vietnam`, country key là `vietnam`, chỉ refresh trong `vietnam`.
-   - Nếu region hiện tại là `us-new-york`, country key là `us`, API có thể thử các region `us-*` khác như `us-seattle`, `us-california`, `us-chicago`.
+   - Nếu region hiện tại là `us-new-york`, country key là `us`, API random trong các region `us-*` như `us-seattle`, `us-california`, `us-chicago` và ưu tiên region khác region hiện tại nếu có.
 
 2. Có truyền `region`:
    - API dùng strict region mode.
@@ -906,6 +913,12 @@ Nếu chưa connected, API trả 409:
 }
 ```
 
+HMA cũng dùng logic refresh chung:
+
+- Không truyền `region`: dùng `auto-country`, random trong các gateway cùng country với region hiện tại.
+- Có truyền `region`: dùng `strict-region`, chỉ reconnect đúng gateway đó.
+- Nếu country chỉ có 1 gateway, API vẫn chọn gateway đó rồi disconnect/connect lại.
+
 Mặc định:
 
 ```env
@@ -913,7 +926,7 @@ HMA_REFRESH_MAX_ATTEMPTS=1
 HMA_REFRESH_TIMEOUT_SECONDS=180
 ```
 
-Nghĩa là HMA chỉ reconnect 1 lần theo cấu hình mặc định. Nếu muốn retry nhiều hơn, tăng `HMA_REFRESH_MAX_ATTEMPTS` trong `.env`.
+Nghĩa là HMA chỉ reconnect 1 lần theo cấu hình mặc định. Nếu muốn thử nhiều gateway trong cùng country khi IP chưa đổi, tăng `HMA_REFRESH_MAX_ATTEMPTS` trong `.env`.
 
 Ví dụ refresh:
 
@@ -1001,10 +1014,11 @@ curl -X POST "http://127.0.0.1:8000/vpn/expressvpn/connect?wait=true&region=germ
 
 ### 11.2 ExpressVPN refresh-ip logic
 
-ExpressVPN refresh giống strict reconnect:
+ExpressVPN cũng dùng logic refresh chung:
 
-- Nếu không truyền `region`, API reconnect region hiện tại hoặc region đang selected.
-- Nếu truyền `region`, API set region đó rồi reconnect.
+- Không truyền `region`: dùng `auto-country`, random trong các region cùng country với region hiện tại.
+- Có truyền `region`: dùng `strict-region`, chỉ set và reconnect đúng region đó.
+- Nếu country chỉ có 1 region, API vẫn chọn region đó rồi disconnect/connect lại.
 - `before.vpnip` phải tồn tại và hợp lệ.
 - `after.vpnip` phải tồn tại, hợp lệ, và khác IP cũ.
 - Giá trị `Unknown` từ `expressvpnctl get vpnip` không được coi là IP.

@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from ..config import Settings
-from .base import VpnError
+from .base import VpnError, refresh_region_plan
 
 REGION_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 CONNECTED = "Connected"
@@ -105,12 +105,16 @@ class ExpressVpnClient:
                 stderr=str(before),
             )
 
+        regions = [] if requested_region else self.get_regions()
+        region_plan = refresh_region_plan(requested_region, current_region, regions)
+        candidates = region_plan.candidates
+
         max_attempts = max(0, self.settings.expressvpn_refresh_max_attempts)
         deadline = time.monotonic() + max(1, self.settings.expressvpn_refresh_timeout_seconds)
         warnings = [*before_warnings, "ExpressVPN reconnect does not guarantee a different IP."]
         tried_regions: list[str] = []
         after: dict[str, Any] = {"pubip": None, "vpnip": None}
-        selected_region = requested_region or current_region
+        selected_region = candidates[0] if candidates else current_region
         changed = False
         connectionstate = ""
         attempt = 0
@@ -118,11 +122,10 @@ class ExpressVpnClient:
         while self._time_remaining(deadline) > 0 and (max_attempts == 0 or attempt < max_attempts):
             attempt += 1
             self._ensure_time_remaining(deadline)
-            if requested_region:
-                selected_region = requested_region
-                self.set_region(requested_region)
-            if selected_region:
+            if candidates:
+                selected_region = candidates[(attempt - 1) % len(candidates)]
                 tried_regions.append(selected_region)
+                self.set_region(selected_region)
             connectionstate = self._reconnect(deadline)
             after, new_warnings, connectionstate = self._wait_for_valid_after_vpnip(deadline)
             warnings.extend(new_warnings)
@@ -133,6 +136,8 @@ class ExpressVpnClient:
             warnings.append(f"Attempt {attempt} returned the same ExpressVPN vpnip: {after['vpnip']}")
 
         data = {
+            "mode": region_plan.mode,
+            "country_key": region_plan.country_key,
             "requested_region": requested_region,
             "initial_region": current_region,
             "selected_region": selected_region,

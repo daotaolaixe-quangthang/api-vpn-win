@@ -7,7 +7,7 @@ import time
 from typing import Any
 
 from ..config import Settings
-from .base import VpnError
+from .base import VpnError, refresh_region_plan
 
 HMA_CONNECTED = "connected"
 HMA_DISCONNECTED = "disconnected"
@@ -155,8 +155,10 @@ class HmaClient:
         if not before_ip:
             raise VpnError("Could not read a valid HMA VPN IP before refresh", status_code=409, stderr=str(before))
 
-        if requested_region:
-            self.set_region(requested_region)
+        current_region = self.get_region()
+        regions = [] if requested_region else self.get_regions()
+        region_plan = refresh_region_plan(requested_region, current_region, regions)
+        candidates = region_plan.candidates
 
         max_attempts = max(1, self.settings.hma_refresh_max_attempts)
         deadline = time.monotonic() + max(1, self.settings.hma_refresh_timeout_seconds)
@@ -169,8 +171,10 @@ class HmaClient:
 
         while self._time_remaining(deadline) > 0 and attempt < max_attempts:
             attempt += 1
-            if self._selected_region:
-                tried_regions.append(self._selected_region)
+            if candidates:
+                selected_region = candidates[(attempt - 1) % len(candidates)]
+                self.set_region(selected_region)
+                tried_regions.append(selected_region)
             self.disconnect(wait=False)
             delay = min(max(0, self.settings.hma_reconnect_delay_seconds), self._time_remaining(deadline))
             if delay:
@@ -189,7 +193,10 @@ class HmaClient:
             warnings.append(f"Attempt {attempt} returned the same HMA VPN IP: {after_ip}")
 
         data = {
+            "mode": region_plan.mode,
+            "country_key": region_plan.country_key,
             "requested_region": requested_region,
+            "initial_region": current_region,
             "selected_region": self._selected_region,
             "tried_regions": tried_regions,
             "before": before,

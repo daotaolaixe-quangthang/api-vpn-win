@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .config import Settings
-from .providers.base import VpnError
+from .providers.base import VpnError, refresh_region_plan
 
 REGION_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 CONNECTED = "Connected"
@@ -133,20 +133,15 @@ class PiaClient:
             )
 
         warnings = [*ip_warnings, "PIA reconnect does not guarantee a different IP."]
-        if requested_region:
-            mode = "strict-region"
-            country_key = self._country_key(requested_region)
-            candidates = [requested_region]
-        else:
-            mode = "auto-country"
-            country_key = self._country_key(current_region)
-            candidates = self._country_candidates(country_key, current_region)
+        regions = [] if requested_region else self.get_regions()
+        region_plan = refresh_region_plan(requested_region, current_region, regions)
+        candidates = region_plan.candidates
 
         max_attempts = max(0, self.settings.refresh_max_attempts)
         deadline = time.monotonic() + max(1, self.settings.refresh_timeout_seconds)
         tried_regions: list[str] = []
         after: dict[str, str | None] = {"pubip": None, "vpnip": None}
-        selected_region = candidates[0]
+        selected_region = candidates[0] if candidates else current_region
         changed = False
         connectionstate = ""
         attempt = 0
@@ -154,9 +149,10 @@ class PiaClient:
         while self._time_remaining(deadline) > 0 and (max_attempts == 0 or attempt < max_attempts):
             attempt += 1
             self._ensure_time_remaining(deadline)
-            selected_region = candidates[(attempt - 1) % len(candidates)]
-            tried_regions.append(selected_region)
-            self.set_region(selected_region)
+            if candidates:
+                selected_region = candidates[(attempt - 1) % len(candidates)]
+                tried_regions.append(selected_region)
+                self.set_region(selected_region)
             connectionstate = self._reconnect(deadline)
             after, new_warnings, connectionstate = self._wait_for_valid_after_vpnip(deadline)
             warnings.extend(new_warnings)
@@ -167,8 +163,8 @@ class PiaClient:
             warnings.append(f"Attempt {attempt} returned the same vpnip: {after['vpnip']}")
 
         data = {
-            "mode": mode,
-            "country_key": country_key,
+            "mode": region_plan.mode,
+            "country_key": region_plan.country_key,
             "requested_region": requested_region,
             "initial_region": current_region,
             "selected_region": selected_region,
@@ -176,7 +172,7 @@ class PiaClient:
             "before": before,
             "after": after,
             "changed": changed,
-            "attempts": len(tried_regions),
+            "attempts": attempt,
             "max_attempts": max_attempts,
             "refresh_timeout_seconds": self.settings.refresh_timeout_seconds,
             "compare_field": "vpnip",
@@ -272,21 +268,6 @@ class PiaClient:
 
     def _time_remaining(self, deadline: float) -> float:
         return max(0, deadline - time.monotonic())
-
-    def _country_candidates(self, country_key: str, current_region: str) -> list[str]:
-        regions = self.get_regions()
-        if "-" in current_region:
-            candidates = [region for region in regions if region == country_key or region.startswith(f"{country_key}-")]
-        else:
-            candidates = [region for region in regions if region == country_key]
-        if current_region not in candidates:
-            candidates.insert(0, current_region)
-        return candidates or [current_region]
-
-    def _country_key(self, region: str) -> str:
-        if "-" not in region:
-            return region
-        return region.split("-", 1)[0]
 
     def _validate_region(self, region: str) -> str:
         region = region.strip()
