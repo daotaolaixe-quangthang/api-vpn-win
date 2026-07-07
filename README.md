@@ -7,6 +7,7 @@ Provider hiện có:
 - `pia` - Private Internet Access VPN
 - `hma` - HMA VPN
 - `expressvpn` - ExpressVPN
+- `proton-openvpn` - Proton VPN qua file `.ovpn` và OpenVPN
 
 API chính dùng format chung:
 
@@ -20,6 +21,7 @@ Ví dụ:
 /vpn/pia/status
 /vpn/hma/status
 /vpn/expressvpn/status
+/vpn/proton-openvpn/status
 ```
 
 Ngoài ra project vẫn giữ endpoint legacy riêng cho PIA:
@@ -47,6 +49,8 @@ HMA service: HmaProVpn
 
 ExpressVPN CLI: C:\Program Files\ExpressVPN\expressvpnctl.exe
 ExpressVPN GUI: C:\Program Files\ExpressVPN\expressvpn-client.exe
+
+Proton OpenVPN: C:\Program Files\Proton\VPN\v4.4.1\Resources\openvpn.exe
 ```
 
 ## 2. Cài đặt
@@ -125,6 +129,17 @@ EXPRESSVPN_RECONNECT_DELAY_SECONDS=3
 EXPRESSVPN_REFRESH_MAX_ATTEMPTS=0
 EXPRESSVPN_REFRESH_TIMEOUT_SECONDS=180
 
+PROTON_OPENVPN_PATH=C:\Program Files\Proton\VPN\v4.4.1\Resources\openvpn.exe
+PROTON_OVPN_CONFIG_PATH=
+PROTON_OVPN_CONFIG_DIR=
+PROTON_OPENVPN_AUTH_FILE=
+PROTON_COMMAND_TIMEOUT_SECONDS=30
+PROTON_CONNECT_TIMEOUT_SECONDS=90
+PROTON_RECONNECT_DELAY_SECONDS=3
+PROTON_REFRESH_MAX_ATTEMPTS=0
+PROTON_REFRESH_TIMEOUT_SECONDS=180
+PROTON_IP_CHECK_URL=https://api.ipify.org
+
 API_HOST=127.0.0.1
 API_PORT=8000
 API_KEY=
@@ -141,6 +156,10 @@ Giải thích biến quan trọng:
 | `*_RECONNECT_DELAY_SECONDS` | Thời gian chờ giữa disconnect và connect khi refresh IP. |
 | `*_REFRESH_TIMEOUT_SECONDS` | Tổng thời gian tối đa cho `refresh-ip`. Mặc định 180 giây. |
 | `*_REFRESH_MAX_ATTEMPTS` | Số lần retry tối đa. Riêng giá trị `0` nghĩa là retry tới khi đổi IP hoặc hết timeout. |
+| `PROTON_OVPN_CONFIG_PATH` | Đường dẫn tới một file `.ovpn` Proton nếu chỉ dùng một cấu hình. |
+| `PROTON_OVPN_CONFIG_DIR` | Thư mục chứa nhiều file `.ovpn`; tên file không có đuôi `.ovpn` là region id. |
+| `PROTON_OPENVPN_AUTH_FILE` | File username/password cho OpenVPN nếu file `.ovpn` cần `auth-user-pass`. |
+| `PROTON_IP_CHECK_URL` | URL trả về public IP dạng text để đọc `pubip` và `vpnip` khi dùng Proton OpenVPN. |
 
 ## 4. Auth bằng API key
 
@@ -226,6 +245,7 @@ Format lỗi thường gặp:
 | Private Internet Access | `pia` | Dùng `piactl.exe`. Có endpoint legacy `/pia/*`. |
 | HMA VPN | `hma` | Dùng `VpnNM.exe` native messaging. |
 | ExpressVPN | `expressvpn` | Dùng `expressvpnctl.exe`. Cần GUI đang chạy hoặc bật background mode. |
+| Proton OpenVPN | `proton-openvpn` | Dùng `openvpn.exe --config <file.ovpn>`. Không điều khiển Proton VPN desktop GUI. |
 
 ## 8. API chung cho mọi provider
 
@@ -235,6 +255,7 @@ Các endpoint dưới đây dùng `{provider}` là một trong:
 pia
 hma
 expressvpn
+proton-openvpn
 ```
 
 ### 8.1 Health check
@@ -1046,9 +1067,98 @@ curl -X POST http://127.0.0.1:8000/vpn/expressvpn/refresh-ip
 curl -X POST "http://127.0.0.1:8000/vpn/expressvpn/refresh-ip?region=germany-frankfurt-1"
 ```
 
-## 12. Quy trình sử dụng khuyến nghị
+## 12. Proton OpenVPN provider
 
-### 12.1 PIA
+Provider name:
+
+```text
+proton-openvpn
+```
+
+Provider này dùng OpenVPN với file `.ovpn` Proton do bạn tải từ trang Proton VPN. Nó không điều khiển Proton VPN Windows desktop app và không gọi `ProtonVPN.Client.exe` hay `ProtonVPNService.exe`.
+
+Dùng OpenVPN executable:
+
+```text
+C:\Program Files\Proton\VPN\v4.4.1\Resources\openvpn.exe
+```
+
+Cấu hình một file `.ovpn`:
+
+```env
+PROTON_OPENVPN_PATH=C:\Program Files\Proton\VPN\v4.4.1\Resources\openvpn.exe
+PROTON_OVPN_CONFIG_PATH=E:\VPN\Proton\nl-free-01.protonvpn.udp.ovpn
+PROTON_OPENVPN_AUTH_FILE=E:\VPN\Proton\auth.txt
+```
+
+Cấu hình nhiều file `.ovpn`:
+
+```env
+PROTON_OVPN_CONFIG_DIR=E:\VPN\Proton\configs
+```
+
+Khi dùng thư mục, API lấy region id từ tên file. Ví dụ file `nl-free-01.protonvpn.udp.ovpn` sẽ có region id:
+
+```text
+nl-free-01.protonvpn.udp
+```
+
+File auth nếu cần có 2 dòng. Đây là OpenVPN/IKEv2 credentials trong Proton account, không phải email/password đăng nhập Proton:
+
+```text
+<openvpn-ikev2-username>
+<openvpn-ikev2-password>
+```
+
+Lấy danh sách region:
+
+```bash
+curl http://127.0.0.1:8000/vpn/proton-openvpn/regions
+```
+
+Chọn region:
+
+```bash
+curl -X POST http://127.0.0.1:8000/vpn/proton-openvpn/region \
+  -H "Content-Type: application/json" \
+  -d "{\"region\":\"nl-free-01.protonvpn.udp\"}"
+```
+
+Connect:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/vpn/proton-openvpn/connect?wait=true"
+```
+
+Status:
+
+```bash
+curl http://127.0.0.1:8000/vpn/proton-openvpn/status
+```
+
+Refresh IP:
+
+```bash
+curl -X POST http://127.0.0.1:8000/vpn/proton-openvpn/refresh-ip
+curl -X POST "http://127.0.0.1:8000/vpn/proton-openvpn/refresh-ip?region=all"
+```
+
+Disconnect:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/vpn/proton-openvpn/disconnect?wait=true"
+```
+
+### 12.1 Giới hạn của Proton OpenVPN provider
+
+- API chỉ theo dõi process OpenVPN do chính API khởi chạy trong phiên app hiện tại.
+- `disconnect` không kill các process OpenVPN khác trên máy.
+- `status` không phản ánh trạng thái Proton VPN desktop GUI.
+- Nếu restart API trong khi OpenVPN vẫn chạy, API mới không tự nhận lại process cũ.
+
+## 13. Quy trình sử dụng khuyến nghị
+
+### 13.1 PIA
 
 ```bash
 curl -X POST http://127.0.0.1:8000/vpn/pia/background/enable
@@ -1060,7 +1170,7 @@ curl -X POST http://127.0.0.1:8000/vpn/pia/refresh-ip
 curl -X POST "http://127.0.0.1:8000/vpn/pia/disconnect?wait=true"
 ```
 
-### 12.2 HMA
+### 13.2 HMA
 
 ```bash
 curl -X POST http://127.0.0.1:8000/vpn/hma/launch
@@ -1071,7 +1181,7 @@ curl -X POST http://127.0.0.1:8000/vpn/hma/refresh-ip
 curl -X POST "http://127.0.0.1:8000/vpn/hma/disconnect?wait=true"
 ```
 
-### 12.3 ExpressVPN
+### 13.3 ExpressVPN
 
 ```bash
 curl -X POST http://127.0.0.1:8000/vpn/expressvpn/background/enable
@@ -1084,7 +1194,18 @@ curl -X POST http://127.0.0.1:8000/vpn/expressvpn/refresh-ip
 curl -X POST "http://127.0.0.1:8000/vpn/expressvpn/disconnect?wait=true"
 ```
 
-## 13. Kiểm tra nhanh từ Python
+### 13.4 Proton OpenVPN
+
+```bash
+curl http://127.0.0.1:8000/vpn/proton-openvpn/regions
+curl -X POST http://127.0.0.1:8000/vpn/proton-openvpn/region -H "Content-Type: application/json" -d "{\"region\":\"nl-free-01.protonvpn.udp\"}"
+curl -X POST "http://127.0.0.1:8000/vpn/proton-openvpn/connect?wait=true"
+curl http://127.0.0.1:8000/vpn/proton-openvpn/status
+curl -X POST http://127.0.0.1:8000/vpn/proton-openvpn/refresh-ip
+curl -X POST "http://127.0.0.1:8000/vpn/proton-openvpn/disconnect?wait=true"
+```
+
+## 14. Kiểm tra nhanh từ Python
 
 Compile source:
 
@@ -1104,9 +1225,10 @@ Kiểm tra provider registry:
 PYTHONPATH=. python -c "from app.config import get_settings; from app.providers.registry import get_provider; print(type(get_provider('pia', get_settings())).__name__)"
 PYTHONPATH=. python -c "from app.config import get_settings; from app.providers.registry import get_provider; print(type(get_provider('hma', get_settings())).__name__)"
 PYTHONPATH=. python -c "from app.config import get_settings; from app.providers.registry import get_provider; print(type(get_provider('expressvpn', get_settings())).__name__)"
+PYTHONPATH=. python -c "from app.config import get_settings; from app.providers.registry import get_provider; print(type(get_provider('proton-openvpn', get_settings())).__name__)"
 ```
 
-## 14. Ghi chú bảo mật
+## 15. Ghi chú bảo mật
 
 - Mặc định nên bind API vào `127.0.0.1`, không bind `0.0.0.0` nếu không thật sự cần.
 - Nếu mở API cho máy khác trong LAN, nên đặt `API_KEY`.
@@ -1114,7 +1236,7 @@ PYTHONPATH=. python -c "from app.config import get_settings; from app.providers.
 - Không truyền secret hoặc tài khoản VPN qua query string.
 - API hiện không login provider. Bạn cần login sẵn trong app VPN hoặc dùng CLI chính thức của provider nếu cần login.
 
-## 15. Troubleshooting
+## 16. Troubleshooting
 
 ### Không tìm thấy executable
 
@@ -1161,6 +1283,45 @@ Cách xử lý:
 - Với HMA, tăng `HMA_REFRESH_MAX_ATTEMPTS` nếu muốn retry nhiều hơn 1 lần.
 - Với PIA, thử truyền region cụ thể nếu muốn strict region, ví dụ `?region=us-seattle`.
 - Với ExpressVPN, thử truyền region cụ thể, ví dụ `?region=germany-frankfurt-1`.
+- Với Proton OpenVPN, thử `?region=all` hoặc chọn file `.ovpn` khác trong `PROTON_OVPN_CONFIG_DIR`.
+
+### Proton OpenVPN lỗi NETSH command failed
+
+Nếu OpenVPN log có dạng:
+
+```text
+NETSH: C:\WINDOWS\system32\netsh.exe interface ip set address ...
+ERROR: command failed: returned error code 1
+NETSH: command failed
+```
+
+Nguyên nhân thường gặp là API server đang chạy không có quyền Administrator. OpenVPN trên Windows cần quyền Administrator để cấu hình IP cho VPN adapter.
+
+Cách xử lý:
+
+- Dừng server API hiện tại.
+- Mở Git Bash, CMD, PowerShell, hoặc Windows Terminal bằng Run as administrator.
+- Chạy lại server từ `e:\2WEBApp\api-vpn-win`.
+- Gọi lại endpoint connect.
+
+### Proton OpenVPN không thấy file .ovpn
+
+Lỗi thường gặp:
+
+```json
+{
+  "detail": {
+    "error": "No Proton OpenVPN .ovpn config files were configured"
+  }
+}
+```
+
+Cách xử lý:
+
+- Đặt `PROTON_OVPN_CONFIG_PATH` nếu chỉ có một file `.ovpn`.
+- Đặt `PROTON_OVPN_CONFIG_DIR` nếu có nhiều file `.ovpn`.
+- Nếu file `.ovpn` cần username/password, tạo file auth 2 dòng và đặt `PROTON_OPENVPN_AUTH_FILE`.
+- Tên region là tên file không có đuôi `.ovpn`.
 
 ### API key bị từ chối
 

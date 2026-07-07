@@ -3,6 +3,7 @@ from ..pia import PiaClient
 from .base import VpnError, VpnProvider
 from .expressvpn import ExpressVpnClient
 from .hma import HmaClient
+from .proton_openvpn import ProtonOpenVpnClient
 
 _clients: dict[str, VpnProvider] = {}
 
@@ -19,6 +20,8 @@ def get_provider(provider: str, settings: Settings) -> VpnProvider:
         client = HmaClient(settings)
     elif provider == "expressvpn":
         client = ExpressVpnClient(settings)
+    elif provider == "proton-openvpn":
+        client = ProtonOpenVpnClient(settings)
     else:
         raise VpnError("Unsupported VPN provider", status_code=404, stderr=provider)
     _clients[provider] = client

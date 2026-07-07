@@ -46,6 +46,19 @@ class Settings(BaseSettings):
     expressvpn_reconnect_delay_seconds: int = Field(default=3, alias="EXPRESSVPN_RECONNECT_DELAY_SECONDS")
     expressvpn_refresh_max_attempts: int = Field(default=0, alias="EXPRESSVPN_REFRESH_MAX_ATTEMPTS")
     expressvpn_refresh_timeout_seconds: int = Field(default=180, alias="EXPRESSVPN_REFRESH_TIMEOUT_SECONDS")
+    proton_openvpn_path: str = Field(
+        default=r"C:\Program Files\Proton\VPN\v4.4.1\Resources\openvpn.exe",
+        alias="PROTON_OPENVPN_PATH",
+    )
+    proton_ovpn_config_path: str = Field(default="", alias="PROTON_OVPN_CONFIG_PATH")
+    proton_ovpn_config_dir: str = Field(default="", alias="PROTON_OVPN_CONFIG_DIR")
+    proton_openvpn_auth_file: str = Field(default="", alias="PROTON_OPENVPN_AUTH_FILE")
+    proton_command_timeout_seconds: int = Field(default=30, alias="PROTON_COMMAND_TIMEOUT_SECONDS")
+    proton_connect_timeout_seconds: int = Field(default=90, alias="PROTON_CONNECT_TIMEOUT_SECONDS")
+    proton_reconnect_delay_seconds: int = Field(default=3, alias="PROTON_RECONNECT_DELAY_SECONDS")
+    proton_refresh_max_attempts: int = Field(default=0, alias="PROTON_REFRESH_MAX_ATTEMPTS")
+    proton_refresh_timeout_seconds: int = Field(default=180, alias="PROTON_REFRESH_TIMEOUT_SECONDS")
+    proton_ip_check_url: str = Field(default="https://api.ipify.org", alias="PROTON_IP_CHECK_URL")
     api_host: str = Field(default="127.0.0.1", alias="API_HOST")
     api_port: int = Field(default=8000, alias="API_PORT")
     api_key: str = Field(default="", alias="API_KEY")
