@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     proton_ovpn_config_path: str = Field(default="", alias="PROTON_OVPN_CONFIG_PATH")
     proton_ovpn_config_dir: str = Field(default="", alias="PROTON_OVPN_CONFIG_DIR")
     proton_openvpn_auth_file: str = Field(default="", alias="PROTON_OPENVPN_AUTH_FILE")
+    proton_openvpn_pid_file: str = Field(default=".proton-openvpn.pid", alias="PROTON_OPENVPN_PID_FILE")
+    proton_openvpn_cleanup_orphan_processes: bool = Field(default=False, alias="PROTON_OPENVPN_CLEANUP_ORPHAN_PROCESSES")
     proton_command_timeout_seconds: int = Field(default=30, alias="PROTON_COMMAND_TIMEOUT_SECONDS")
     proton_connect_timeout_seconds: int = Field(default=90, alias="PROTON_CONNECT_TIMEOUT_SECONDS")
     proton_reconnect_delay_seconds: int = Field(default=3, alias="PROTON_RECONNECT_DELAY_SECONDS")

@@ -133,6 +133,8 @@ PROTON_OPENVPN_PATH=C:\Program Files\Proton\VPN\v4.4.1\Resources\openvpn.exe
 PROTON_OVPN_CONFIG_PATH=
 PROTON_OVPN_CONFIG_DIR=
 PROTON_OPENVPN_AUTH_FILE=
+PROTON_OPENVPN_PID_FILE=.proton-openvpn.pid
+PROTON_OPENVPN_CLEANUP_ORPHAN_PROCESSES=true
 PROTON_COMMAND_TIMEOUT_SECONDS=30
 PROTON_CONNECT_TIMEOUT_SECONDS=90
 PROTON_RECONNECT_DELAY_SECONDS=3
@@ -159,6 +161,8 @@ Giải thích biến quan trọng:
 | `PROTON_OVPN_CONFIG_PATH` | Đường dẫn tới một file `.ovpn` Proton nếu chỉ dùng một cấu hình. |
 | `PROTON_OVPN_CONFIG_DIR` | Thư mục chứa nhiều file `.ovpn`; tên file không có đuôi `.ovpn` là region id. |
 | `PROTON_OPENVPN_AUTH_FILE` | File username/password cho OpenVPN nếu file `.ovpn` cần `auth-user-pass`. |
+| `PROTON_OPENVPN_PID_FILE` | File lưu PID process OpenVPN để API dọn process cũ sau khi server restart. |
+| `PROTON_OPENVPN_CLEANUP_ORPHAN_PROCESSES` | Nếu `true`, provider tự dọn một process `openvpn.exe` mồ côi khi không có PID file. Chỉ nên bật khi máy không chạy OpenVPN khác song song. |
 | `PROTON_IP_CHECK_URL` | URL trả về public IP dạng text để đọc `pubip` và `vpnip` khi dùng Proton OpenVPN. |
 
 ## 4. Auth bằng API key
@@ -1089,6 +1093,8 @@ Cấu hình một file `.ovpn`:
 PROTON_OPENVPN_PATH=C:\Program Files\Proton\VPN\v4.4.1\Resources\openvpn.exe
 PROTON_OVPN_CONFIG_PATH=E:\VPN\Proton\nl-free-01.protonvpn.udp.ovpn
 PROTON_OPENVPN_AUTH_FILE=E:\VPN\Proton\auth.txt
+PROTON_OPENVPN_PID_FILE=.proton-openvpn.pid
+PROTON_OPENVPN_CLEANUP_ORPHAN_PROCESSES=true
 ```
 
 Cấu hình nhiều file `.ovpn`:
@@ -1151,10 +1157,11 @@ curl -X POST "http://127.0.0.1:8000/vpn/proton-openvpn/disconnect?wait=true"
 
 ### 12.1 Giới hạn của Proton OpenVPN provider
 
-- API chỉ theo dõi process OpenVPN do chính API khởi chạy trong phiên app hiện tại.
-- `disconnect` không kill các process OpenVPN khác trên máy.
+- API chỉ theo dõi process OpenVPN do chính API khởi chạy hoặc process cũ còn PID trong `PROTON_OPENVPN_PID_FILE`.
+- `disconnect` chỉ dọn process OpenVPN có PID do provider đã lưu, không kill toàn bộ `openvpn.exe` trên máy.
+- `connect` tự dọn process cũ từ PID file trước khi mở OpenVPN mới.
+- Nếu bật `PROTON_OPENVPN_CLEANUP_ORPHAN_PROCESSES=true`, `connect` có thể tự dọn một process `openvpn.exe` mồ côi khi PID file bị mất.
 - `status` không phản ánh trạng thái Proton VPN desktop GUI.
-- Nếu restart API trong khi OpenVPN vẫn chạy, API mới không tự nhận lại process cũ.
 
 ## 13. Quy trình sử dụng khuyến nghị
 
@@ -1284,6 +1291,26 @@ Cách xử lý:
 - Với PIA, thử truyền region cụ thể nếu muốn strict region, ví dụ `?region=us-seattle`.
 - Với ExpressVPN, thử truyền region cụ thể, ví dụ `?region=germany-frankfurt-1`.
 - Với Proton OpenVPN, thử `?region=all` hoặc chọn file `.ovpn` khác trong `PROTON_OVPN_CONFIG_DIR`.
+
+### Proton OpenVPN báo DCO adapter đang được dùng
+
+Nếu OpenVPN log có dạng:
+
+```text
+All ovpn-dco adapters on this system are currently in use or disabled.
+```
+
+Nguyên nhân thường gặp là process OpenVPN cũ vẫn đang chạy sau khi API server bị restart hoặc tắt đột ngột. Provider dùng `PROTON_OPENVPN_PID_FILE` để lưu PID và tự dọn process cũ khi gọi `connect` hoặc `disconnect` lần sau. Nếu PID file bị mất nhưng còn đúng một `openvpn.exe`, bật `PROTON_OPENVPN_CLEANUP_ORPHAN_PROCESSES=true` để provider tự dọn process mồ côi đó. Nếu vẫn lỗi, kiểm tra process còn sót:
+
+```powershell
+tasklist /FI "IMAGENAME eq openvpn.exe"
+```
+
+Chỉ kill thủ công khi chắc process đó là phiên OpenVPN cũ không cần dùng nữa:
+
+```powershell
+taskkill /PID <PID> /F
+```
 
 ### Proton OpenVPN lỗi NETSH command failed
 

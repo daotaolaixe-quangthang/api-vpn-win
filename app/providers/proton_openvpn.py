@@ -1,5 +1,6 @@
 import ctypes
 import ipaddress
+import json
 import os
 import re
 import subprocess
@@ -39,6 +40,11 @@ class ProtonOpenVpnClient:
 
     def connect(self, wait: bool = False) -> dict[str, Any]:
         active_process = self._active_process()
+        if not active_process:
+            cleaned_pid = self._cleanup_pid_file_process()
+            if cleaned_pid is None:
+                self._cleanup_orphan_processes()
+            active_process = self._active_process()
         if active_process:
             data: dict[str, Any] = {
                 "message": "Managed Proton OpenVPN process is already running",
@@ -78,6 +84,7 @@ class ProtonOpenVpnClient:
         self._active_region = region
         self._active_config_path = str(config_path)
         self._connected_marker_seen = False
+        self._write_pid_file(process.pid, region, str(config_path))
         self._clear_log_lines()
         self._start_log_reader(process)
 
@@ -94,19 +101,20 @@ class ProtonOpenVpnClient:
 
     def disconnect(self, wait: bool = False) -> dict[str, Any]:
         process = self._active_process()
-        if not process:
-            self._clear_active_process()
-            return {"message": "No managed Proton OpenVPN process is running", "connectionstate": DISCONNECTED}
-
-        process.terminate()
-        try:
-            process.wait(timeout=max(1, self.settings.proton_command_timeout_seconds))
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=5)
+        cleaned_pid = None
+        if process:
+            self._terminate_process(process)
+            cleaned_pid = process.pid
+        else:
+            cleaned_pid = self._cleanup_pid_file_process()
+            if cleaned_pid is None:
+                self._clear_active_process()
+                self._remove_pid_file()
+                return {"message": "No managed Proton OpenVPN process is running", "connectionstate": DISCONNECTED}
 
         self._clear_active_process()
-        data: dict[str, Any] = {"message": "Proton OpenVPN disconnect command sent", "connectionstate": DISCONNECTED}
+        self._remove_pid_file()
+        data: dict[str, Any] = {"message": "Proton OpenVPN disconnect command sent", "connectionstate": DISCONNECTED, "pid": cleaned_pid}
         if wait:
             data["connectionstate"] = self.wait_for_state(DISCONNECTED, self.settings.proton_connect_timeout_seconds)
         return data
@@ -156,6 +164,9 @@ class ProtonOpenVpnClient:
         connection_state = self.get_connection_state()
         pubip = self._safe_public_ip(warnings)
         process = self._active_process()
+        pid_file_data = self._read_pid_file()
+        pid_file_pid = pid_file_data.get("pid") if pid_file_data else None
+        pid_file_alive = isinstance(pid_file_pid, int) and self._is_openvpn_pid(pid_file_pid)
         return {
             "connectionstate": connection_state,
             "region": self.get_region(),
@@ -165,7 +176,9 @@ class ProtonOpenVpnClient:
             "vpnip": pubip if connection_state == CONNECTED else None,
             "vpnip_source": "PROTON_IP_CHECK_URL when the managed OpenVPN process is connected",
             "pid": process.pid if process else None,
-            "config_path": self._active_config_path,
+            "pid_file_pid": pid_file_pid,
+            "pid_file_alive": pid_file_alive,
+            "config_path": self._active_config_path or (pid_file_data or {}).get("config_path"),
             "state_source": "managed_openvpn_process",
         }, self._dedupe(warnings)
 
@@ -367,6 +380,7 @@ class ProtonOpenVpnClient:
         if self._process.poll() is None:
             return self._process
         self._clear_active_process()
+        self._remove_pid_file()
         return None
 
     def _clear_active_process(self) -> None:
@@ -374,6 +388,131 @@ class ProtonOpenVpnClient:
         self._active_region = None
         self._active_config_path = None
         self._connected_marker_seen = False
+
+    def _terminate_process(self, process: subprocess.Popen[str]) -> None:
+        process.terminate()
+        try:
+            process.wait(timeout=max(1, self.settings.proton_command_timeout_seconds))
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+
+    def _pid_file_path(self) -> Path:
+        return Path(self.settings.proton_openvpn_pid_file)
+
+    def _write_pid_file(self, pid: int, region: str, config_path: str) -> None:
+        pid_file = self._pid_file_path()
+        data = {"pid": pid, "region": region, "config_path": config_path, "executable": self.settings.proton_openvpn_path}
+        pid_file.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
+
+    def _read_pid_file(self) -> dict[str, Any] | None:
+        pid_file = self._pid_file_path()
+        if not pid_file.is_file():
+            return None
+        try:
+            data = json.loads(pid_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            self._remove_pid_file()
+            return None
+        if not isinstance(data, dict):
+            self._remove_pid_file()
+            return None
+        return data
+
+    def _remove_pid_file(self) -> None:
+        try:
+            self._pid_file_path().unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+    def _cleanup_pid_file_process(self) -> int | None:
+        data = self._read_pid_file()
+        if not data:
+            return None
+        pid = data.get("pid")
+        if not isinstance(pid, int) or pid <= 0:
+            self._remove_pid_file()
+            return None
+        if not self._is_openvpn_pid(pid):
+            self._remove_pid_file()
+            return None
+        self._terminate_pid(pid)
+        if self._is_openvpn_pid(pid):
+            raise VpnError("Managed Proton OpenVPN process could not be terminated", status_code=503, stderr=f"pid={pid}")
+        self._remove_pid_file()
+        return pid
+
+    def _cleanup_orphan_processes(self) -> int | None:
+        if not self.settings.proton_openvpn_cleanup_orphan_processes:
+            return None
+        pids = self._openvpn_pids()
+        if not pids:
+            return None
+        if len(pids) != 1:
+            raise VpnError(
+                "Multiple orphan OpenVPN processes are running; refusing to guess which one to terminate",
+                status_code=409,
+                stderr=",".join(str(pid) for pid in pids),
+            )
+        pid = pids[0]
+        self._terminate_pid(pid)
+        if self._is_openvpn_pid(pid):
+            raise VpnError("Orphan OpenVPN process could not be terminated", status_code=503, stderr=f"pid={pid}")
+        return pid
+
+    def _openvpn_pids(self) -> list[int]:
+        if os.name != "nt":
+            return []
+        result = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq openvpn.exe", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            shell=False,
+            check=False,
+            timeout=max(1, self.settings.proton_command_timeout_seconds),
+        )
+        pids: list[int] = []
+        for line in (result.stdout or "").splitlines():
+            parts = [part.strip().strip('"') for part in line.split(",")]
+            if len(parts) < 2 or parts[0].lower() != "openvpn.exe":
+                continue
+            try:
+                pids.append(int(parts[1]))
+            except ValueError:
+                pass
+        return pids
+
+    def _is_openvpn_pid(self, pid: int) -> bool:
+        if os.name != "nt":
+            return False
+        result = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            shell=False,
+            check=False,
+            timeout=max(1, self.settings.proton_command_timeout_seconds),
+        )
+        output = (result.stdout or "").lower()
+        return "openvpn.exe" in output
+
+    def _terminate_pid(self, pid: int) -> None:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/F"],
+                capture_output=True,
+                text=True,
+                shell=False,
+                check=False,
+                timeout=max(1, self.settings.proton_command_timeout_seconds),
+            )
+            return
+        try:
+            os.kill(pid, 15)
+        except OSError:
+            pass
 
     def _ensure_file(self, path: str, message: str) -> None:
         if not os.path.isfile(path):
